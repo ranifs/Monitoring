@@ -214,6 +214,8 @@ def build_report_for_org(org_name: str, cameras: list):
         return None
     problem_lines = []
     no_archive_count = 0
+    no_archive_orgs = []
+    
     for cam in cameras:
         cam_name = cam.get("name") or cam.get("title") or cam.get("label") or cam.get("id") or "(Без имени)"
         online = cam.get("stream_status", {}).get("alive", False)
@@ -226,14 +228,18 @@ def build_report_for_org(org_name: str, cameras: list):
             problems.append("❌ Нет архива")
         if problems:
             problem_lines.append(f"📍 {cam_name} — {', '.join(problems)}")
+    
     if not problem_lines:
         return None  # Нет проблемных камер — не выводим организацию
+    
     report = f"====================\n🏢 {org_name}\n====================\n"
+    
+    # Проверяем, если нет архива на всех камерах
     if no_archive_count == len(cameras):
-        report += "❗ Нет архива на всех камерах!\n"
+        return {"type": "no_archive_all", "org_name": org_name}
     else:
         report += "\n".join(problem_lines)
-    return report
+        return {"type": "normal", "content": report}
 
 # ======= Основная функция =======
 def main():
@@ -242,12 +248,21 @@ def main():
     
     print(f"🚀 Запуск скрипта мониторинга камер в {time.strftime('%Y-%m-%d %H:%M:%S')}")
     
+    # 1. Отправляем уведомление о начале мониторинга
+    try:
+        start_message = f"🚀 Начинаем мониторинг камер\n⏰ Время запуска: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        send_telegram_message(start_message)
+        print("📨 Отправлено уведомление о начале мониторинга")
+    except Exception as e:
+        print(f"⚠ Не удалось отправить уведомление о начале: {e}")
+    
     try:
         orgs = get_organizations()
         if not isinstance(orgs, list):
             raise Exception("Неожиданный формат данных организаций")
 
         problem_reports = []
+        no_archive_orgs = []  # Список организаций без архива на всех камерах
         total_orgs = len(orgs)
         processed_orgs = 0
         
@@ -296,7 +311,10 @@ def main():
 
                 report = build_report_for_org(org_name, cams_data)
                 if report:
-                    problem_reports.append(report)
+                    if report["type"] == "no_archive_all":
+                        no_archive_orgs.append(report["org_name"])
+                    else:
+                        problem_reports.append(report["content"])
 
             except KeyboardInterrupt:
                 print("❌ Прервано пользователем")
@@ -305,11 +323,20 @@ def main():
                 print(f"⚠ Ошибка при обработке {org.get('name', 'Unknown')}: {e}")
                 continue
 
+        # 2. Отправляем отчеты в правильном порядке
+        if no_archive_orgs:
+            # Сначала отправляем сообщение о домах без архива
+            no_archive_message = f"❗️ НЕТ АРХИВА НА ВСЕХ КАМЕРАХ:\n\n" + "\n".join([f"🏢 {org}" for org in no_archive_orgs])
+            send_telegram_message(no_archive_message)
+            print(f"📨 Отправлено сообщение о {len(no_archive_orgs)} домах без архива")
+        
         if problem_reports:
+            # Затем отправляем обычные отчеты
             send_telegram_message("✅ Большинство камер онлайн и с архивом.")
             for report in problem_reports:
                 send_telegram_message(report)
-        else:
+        elif not no_archive_orgs:
+            # Если нет проблем вообще
             send_telegram_message("✅ Все камеры онлайн и с архивом.")
 
         # Финальная статистика
@@ -317,16 +344,32 @@ def main():
         print(f"✅ Скрипт завершен успешно за {total_time:.1f} секунд")
         print(f"📊 Обработано организаций: {processed_orgs}/{total_orgs}")
         print(f"📨 Отправлено отчетов: {len(problem_reports)}")
+        print(f"🏢 Домов без архива: {len(no_archive_orgs)}")
 
     except TimeoutError as e:
         total_time = time.time() - start_time
-        print(f"❌ Время выполнения превысило лимит: {e} (прошло {total_time:.1f}с)")
+        error_message = f"❌ Мониторинг прерван по таймауту (прошло {total_time:.1f}с)"
+        print(error_message)
+        try:
+            send_telegram_message(error_message)
+        except:
+            pass
     except KeyboardInterrupt:
         total_time = time.time() - start_time
-        print(f"❌ Прервано пользователем (прошло {total_time:.1f}с)")
+        error_message = f"❌ Мониторинг прерван пользователем (прошло {total_time:.1f}с)"
+        print(error_message)
+        try:
+            send_telegram_message(error_message)
+        except:
+            pass
     except Exception as e:
         total_time = time.time() - start_time
-        print(f"❌ Общая ошибка: {e} (прошло {total_time:.1f}с)")
+        error_message = f"❌ Ошибка мониторинга: {e} (прошло {total_time:.1f}с)"
+        print(error_message)
+        try:
+            send_telegram_message(error_message)
+        except:
+            pass
         import traceback
         traceback.print_exc()
 
