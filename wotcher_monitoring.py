@@ -1,5 +1,14 @@
 import sys, io
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+import locale
+import os
+
+# Настройка кодировки для стабильной работы
+if sys.platform.startswith('win'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+else:
+    # Для Linux/Unix систем
+    locale.setlocale(locale.LC_ALL, 'C.UTF-8')
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 import requests
 import time
@@ -27,11 +36,40 @@ def send_telegram_message(text):
 
 # ======= Универсальный GET =======
 def get_json_with_retries(url, headers=None, retries=3, timeout=30):
+    import ssl
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    
+    # Создаем сессию с повторными попытками
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=retries,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504],
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
     for attempt in range(retries):
         try:
-            resp = requests.get(url, headers=headers, timeout=timeout)
+            # Добавляем SSL контекст для более стабильной работы
+            resp = session.get(url, headers=headers, timeout=timeout, verify=True)
             resp.raise_for_status()
             return resp.json()
+        except (requests.exceptions.SSLError, ssl.SSLError) as e:
+            print(f"⚠ SSL ошибка на попытке {attempt+1}/{retries}: {e}")
+            if attempt < retries - 1:
+                time.sleep(3)  # Увеличиваем время ожидания для SSL ошибок
+            else:
+                # Последняя попытка - пробуем без SSL проверки
+                try:
+                    resp = session.get(url, headers=headers, timeout=timeout, verify=False)
+                    resp.raise_for_status()
+                    return resp.json()
+                except Exception as final_e:
+                    print(f"⚠ Финальная попытка не удалась: {final_e}")
+                    raise Exception(f"Не удалось получить данные с {url}")
         except Exception as e:
             print(f"⚠ Попытка {attempt+1}/{retries} не удалась: {e}")
             time.sleep(2)
@@ -121,6 +159,10 @@ def main():
                 org_name = org.get("name") or org.get("title") or org.get("label")
                 org_id = org.get("id")
 
+                if not org_name or not org_id:
+                    print(f"⚠ Пропускаем организацию без имени или ID: {org}")
+                    continue
+
                 if org_name in EXCLUDED_ORG_NAMES:
                     print(f"⏩ Пропускаем организацию: {org_name} (id={org_id})")
                     continue
@@ -134,15 +176,19 @@ def main():
                     print(f"ℹ В организации {org_name} нет камер.")
                     continue
 
-                # Лог первой камеры
-                print(f"🛠 Первая камера: {cams_data[0]}")
+                # Лог первой камеры (только если есть камеры)
+                if cams_data:
+                    print(f"🛠 Первая камера: {cams_data[0]}")
 
                 report = build_report_for_org(org_name, cams_data)
                 if report:
                     problem_reports.append(report)
 
+            except KeyboardInterrupt:
+                print("❌ Прервано пользователем")
+                break
             except Exception as e:
-                print(f"⚠ Ошибка при обработке {org.get('name')}: {e}")
+                print(f"⚠ Ошибка при обработке {org.get('name', 'Unknown')}: {e}")
                 continue
 
         if problem_reports:
