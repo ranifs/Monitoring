@@ -3,6 +3,8 @@ import locale
 import os
 import signal
 import atexit
+from datetime import datetime
+import pytz
 
 # Настройка кодировки для стабильной работы
 if sys.platform.startswith('win'):
@@ -11,6 +13,17 @@ else:
     # Для Linux/Unix систем
     locale.setlocale(locale.LC_ALL, 'C.UTF-8')
     os.environ['PYTHONIOENCODING'] = 'utf-8'
+
+# Настройка московского времени
+MOSCOW_TZ = pytz.timezone('Europe/Moscow')
+
+def get_moscow_time():
+    """Возвращает текущее время в московском часовом поясе"""
+    return datetime.now(MOSCOW_TZ)
+
+def format_moscow_time():
+    """Возвращает отформатированное московское время"""
+    return get_moscow_time().strftime('%Y-%m-%d %H:%M:%S')
 
 import requests
 import time
@@ -240,7 +253,7 @@ def main():
     global script_running, start_time
     start_time = time.time()
     
-    print(f"🚀 Запуск скрипта мониторинга камер в {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"🚀 Запуск скрипта мониторинга камер в {format_moscow_time()}")
     
     try:
         orgs = get_organizations()
@@ -252,6 +265,9 @@ def main():
         processed_orgs = 0
         
         print(f"📊 Начинаем обработку {total_orgs} организаций...")
+        
+        # Отправляем уведомление о начале мониторинга
+        send_telegram_message(f"🚀 Начинаем мониторинг камер\n⏰ Время запуска: {format_moscow_time()}")
         
         for org in orgs:
             # Проверяем, не был ли скрипт остановлен
