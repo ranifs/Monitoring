@@ -1,0 +1,17 @@
+[Unit]
+Description=Wotcher Camera Monitoring Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/wotcher_monitoring
+Environment=PATH=/opt/wotcher_monitoring/venv/bin
+ExecStart=/opt/wotcher_monitoring/venv/bin/python wotcher_monitoring_vps.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
