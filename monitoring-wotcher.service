@@ -1,0 +1,18 @@
+[Unit]
+Description=Monitoring Wotcher Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/Monitoring
+ExecStart=/opt/Monitoring/.venv/bin/python /opt/Monitoring/wotcher_monitoring_vps.py
+Restart=always
+RestartSec=5
+KillMode=process
+TimeoutStopSec=20
+# Ограничиваем параллельный запуск, чтобы не было конфликтов Telegram getUpdates
+ExecStop=/bin/kill -TERM $MAINPID
+
+[Install]
+WantedBy=multi-user.target
