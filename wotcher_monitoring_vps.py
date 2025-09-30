@@ -101,40 +101,140 @@ def get_organizations():
 def get_cameras_for_org(org_id):
     url = f"https://cameras.sputnik.systems/vsaas/api/v2/cameras?organization_id={org_id}"
     headers = {"Authorization": f"Bearer {SPUTNIK_API_TOKEN}"}
-    return fetch_all_items(url, headers)
+    try:
+        cameras = fetch_all_items(url, headers)
+        print(f"📹 Получено {len(cameras)} камер для организации {org_id}")
+        return cameras
+    except Exception as e:
+        print(f"⚠️ Ошибка получения камер для организации {org_id}: {e}")
+        return []
+
+def check_camera_status(cam):
+    """Улучшенная проверка статуса камеры"""
+    problems = []
+    
+    # Проверяем различные статусы подключения
+    stream_status = cam.get("stream_status", {})
+    connection_status = cam.get("connection_status", {})
+    recording_status = cam.get("recording_status", {})
+    
+    # Проверка онлайн статуса
+    is_online = False
+    if stream_status.get("alive", False):
+        is_online = True
+    elif connection_status.get("connected", False):
+        is_online = True
+    elif stream_status.get("status") == "active":
+        is_online = True
+    
+    if not is_online:
+        problems.append("❌ Нет онлайн")
+    
+    # Проверка архива - более детальная
+    has_archive = False
+    archive_problems = []
+    
+    # Проверяем различные поля архива
+    dvr_depth = cam.get("dvr_depth", 0)
+    archive_size = cam.get("archive_size", 0)
+    recording_enabled = cam.get("recording_enabled", False)
+    
+    if dvr_depth > 0:
+        has_archive = True
+    elif archive_size > 0:
+        has_archive = True
+    elif recording_enabled:
+        has_archive = True
+    elif recording_status.get("active", False):
+        has_archive = True
+    
+    if not has_archive:
+        archive_problems.append("❌ Нет архива")
+        # Дополнительная диагностика
+        if dvr_depth == 0:
+            archive_problems.append("(dvr_depth=0)")
+        if not recording_enabled:
+            archive_problems.append("(запись отключена)")
+    
+    problems.extend(archive_problems)
+    
+    # Проверка качества сигнала
+    signal_quality = cam.get("signal_quality", {})
+    if signal_quality.get("level", 100) < 50:
+        problems.append("⚠️ Слабое качество сигнала")
+    
+    # Проверка последней активности
+    last_activity = cam.get("last_activity")
+    if last_activity:
+        try:
+            from datetime import datetime, timedelta
+            import time
+            # Предполагаем, что last_activity в Unix timestamp
+            last_time = datetime.fromtimestamp(last_activity)
+            if datetime.now() - last_time > timedelta(hours=1):
+                problems.append("⚠️ Нет активности >1ч")
+        except:
+            pass
+    
+    return {
+        "is_online": is_online,
+        "has_archive": has_archive,
+        "problems": problems,
+        "dvr_depth": dvr_depth,
+        "recording_enabled": recording_enabled
+    }
 
 def build_report_for_org(org_name, cameras):
     if not cameras:
         return None
     problem_lines = []
     no_archive_count = 0
+    offline_count = 0
+    
     for cam in cameras:
         cam_name = cam.get("name") or cam.get("title") or cam.get("label") or cam.get("id") or "(Без имени)"
-        online = cam.get("stream_status", {}).get("alive", False)
-        archive = cam.get("dvr_depth", 0) > 0
-        problems = []
-        if not online:
-            problems.append("❌ Нет онлайн")
-        if not archive:
+        status = check_camera_status(cam)
+        
+        if not status["is_online"]:
+            offline_count += 1
+        if not status["has_archive"]:
             no_archive_count += 1
-            problems.append("❌ Нет архива")
-        if problems:
-            problem_lines.append(f"📍 {cam_name} — {', '.join(problems)}")
+            
+        if status["problems"]:
+            problem_lines.append(f"📍 {cam_name} — {', '.join(status['problems'])}")
+    
     if not problem_lines:
         return None
+    
     report = f"====================\n🏢 {org_name}\n====================\n"
+    
+    # Специальные случаи
     if no_archive_count == len(cameras):
         return {"type": "no_archive_all", "org_name": org_name}
+    if offline_count == len(cameras):
+        return {"type": "all_offline", "org_name": org_name}
+    
     report += "\n".join(problem_lines)
     return {"type": "normal", "content": report}
 
 # ===== Команда /start =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🚀 Начинаем мониторинг камер...")
-    orgs = get_organizations()
+    
+    try:
+        orgs = get_organizations()
+        print(f"🏢 Получено {len(orgs)} организаций")
+    except Exception as e:
+        await send_telegram_message(f"❌ Ошибка получения организаций: {e}")
+        return
+    
     problem_reports = []
     no_archive_orgs = []
 
+    # Обработка специальных случаев
+    no_archive_orgs = []
+    all_offline_orgs = []
+    
     for org in orgs:
         org_name = org.get("name") or org.get("title") or org.get("label")
         org_id = org.get("id")
@@ -147,25 +247,74 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if report:
             if report["type"] == "no_archive_all":
                 no_archive_orgs.append(report["org_name"])
+            elif report["type"] == "all_offline":
+                all_offline_orgs.append(report["org_name"])
             else:
                 problem_reports.append(report["content"])
 
+    # Отправляем сообщения
+    if all_offline_orgs:
+        msg = f"🚨 ВСЕ КАМЕРЫ ОФФЛАЙН:\n\n" + "\n".join([f"🏢 {org}" for org in all_offline_orgs])
+        await send_telegram_message(msg)
+    
     if no_archive_orgs:
         msg = f"❗️ НЕТ АРХИВА НА ВСЕХ КАМЕРАХ:\n\n" + "\n".join([f"🏢 {org}" for org in no_archive_orgs])
         await send_telegram_message(msg)
 
     if problem_reports:
-        await send_telegram_message("✅ Некоторые камеры имеют проблемы:")
+        await send_telegram_message("⚠️ Некоторые камеры имеют проблемы:")
         for report in problem_reports:
             await send_telegram_message(report)
-    elif not no_archive_orgs:
+    elif not no_archive_orgs and not all_offline_orgs:
         await send_telegram_message("✅ Все камеры онлайн и с архивом.")
+
+# ===== Команда /test_org =====
+async def test_org(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Тестирование конкретной организации"""
+    if not context.args:
+        await update.message.reply_text("❌ Укажите ID организации: /test_org <org_id>")
+        return
+    
+    org_id = context.args[0]
+    await update.message.reply_text(f"🔍 Тестируем организацию {org_id}...")
+    
+    try:
+        cams_data = get_cameras_for_org(org_id)
+        if not cams_data:
+            await send_telegram_message(f"❌ Камеры не найдены для организации {org_id}")
+            return
+        
+        # Получаем название организации
+        orgs = get_organizations()
+        org_name = "Неизвестная организация"
+        for org in orgs:
+            if org.get("id") == org_id:
+                org_name = org.get("name") or org.get("title") or org.get("label")
+                break
+        
+        report = build_report_for_org(org_name, cams_data)
+        if report:
+            if report["type"] == "no_archive_all":
+                await send_telegram_message(f"❗️ В организации {org_name} НЕТ АРХИВА НА ВСЕХ КАМЕРАХ")
+            elif report["type"] == "all_offline":
+                await send_telegram_message(f"🚨 В организации {org_name} ВСЕ КАМЕРЫ ОФФЛАЙН")
+            else:
+                await send_telegram_message(f"⚠️ Проблемы в организации {org_name}:")
+                await send_telegram_message(report["content"])
+        else:
+            await send_telegram_message(f"✅ В организации {org_name} все камеры работают нормально")
+            
+    except Exception as e:
+        await send_telegram_message(f"❌ Ошибка тестирования организации {org_id}: {e}")
 
 # ===== Main =====
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    print("🤖 Бот запущен. Ждем команду /start...")
+    app.add_handler(CommandHandler("test_org", test_org))
+    print("🤖 Бот запущен. Доступные команды:")
+    print("  /start - полный мониторинг всех камер")
+    print("  /test_org <org_id> - тестирование конкретной организации")
     app.run_polling()
 
 if __name__ == "__main__":
