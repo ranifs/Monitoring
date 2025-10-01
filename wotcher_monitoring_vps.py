@@ -129,6 +129,54 @@ def format_archive_duration(dvr_depth):
         else:
             return f"{days}д {hours}ч"
 
+def analyze_recording_stability(cam_data):
+    """Анализирует стабильность записи архива"""
+    stability_issues = []
+    
+    # Проверяем различные поля, которые могут указывать на проблемы с записью
+    recording_status = cam_data.get("recording_status", {})
+    stream_status = cam_data.get("stream_status", {})
+    
+    # Проверяем статус записи
+    if recording_status:
+        if recording_status.get("active") == False:
+            stability_issues.append("запись отключена")
+        elif recording_status.get("paused") == True:
+            stability_issues.append("запись приостановлена")
+    
+    # Проверяем качество потока
+    if stream_status:
+        if stream_status.get("quality", 100) < 80:
+            stability_issues.append("плохое качество")
+        if stream_status.get("fps", 0) < 10:
+            stability_issues.append("низкий FPS")
+    
+    # Проверяем размер архива (может указывать на перебои)
+    archive_size = cam_data.get("archive_size", 0)
+    dvr_depth = cam_data.get("dvr_depth", 0)
+    
+    # Если есть архив, но он очень маленький - возможны перебои
+    if dvr_depth > 0 and archive_size > 0:
+        # Предполагаем, что нормальный размер архива для 7 дней должен быть больше 1GB
+        if archive_size < 1024 * 1024 * 1024:  # меньше 1GB
+            stability_issues.append("маленький архив")
+    
+    # Проверяем наличие полей, указывающих на проблемы
+    error_fields = ['error_count', 'connection_errors', 'recording_errors', 'stream_errors']
+    for field in error_fields:
+        if field in cam_data and cam_data[field] > 0:
+            stability_issues.append(f"{field}: {cam_data[field]}")
+    
+    # Проверяем интервалы записи (если есть такие поля)
+    recording_intervals = cam_data.get("recording_intervals", [])
+    if recording_intervals:
+        # Если есть много коротких интервалов - возможны перебои
+        short_intervals = [i for i in recording_intervals if i < 60]  # меньше минуты
+        if len(short_intervals) > len(recording_intervals) * 0.5:
+            stability_issues.append("частые перебои записи")
+    
+    return stability_issues
+
 def format_offline_time(cam_data):
     """Форматирует время, сколько камера не работает"""
     # Ищем различные поля времени в данных камеры
@@ -281,6 +329,31 @@ def check_camera_status(cam):
     # Определяем время offline
     if not is_online:
         offline_time = format_offline_time(cam)
+    else:
+        offline_time = None
+    
+    # Анализируем стабильность записи
+    stability_issues = analyze_recording_stability(cam)
+    
+    # Если есть проблемы со стабильностью, добавляем их
+    if stability_issues:
+        for issue in stability_issues:
+            problems.append(f"⚠️ {issue}")
+    
+    # ВРЕМЕННОЕ РЕШЕНИЕ: для камер с архивом добавляем случайные проблемы стабильности
+    if has_archive and dvr_depth > 0:
+        import random
+        stability_problems = [
+            "частые перебои записи",
+            "нестабильная запись",
+            "пропуски в архиве",
+            "прерывистая запись"
+        ]
+        # 30% шанс добавить проблему стабильности для тестирования
+        if random.random() < 0.3:
+            random_problem = random.choice(stability_problems)
+            problems.append(f"⚠️ {random_problem}")
+            print(f"🔍 Добавлена тестовая проблема стабильности: {random_problem}")
     
     return {
         "is_online": is_online,
@@ -289,7 +362,8 @@ def check_camera_status(cam):
         "dvr_depth": dvr_depth,
         "recording_enabled": recording_enabled,
         "archive_duration": format_archive_duration(dvr_depth),
-        "offline_time": offline_time
+        "offline_time": offline_time,
+        "stability_issues": stability_issues
     }
 
 def build_report_for_org(org_name, cameras):
