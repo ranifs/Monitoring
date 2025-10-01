@@ -231,9 +231,15 @@ def build_report_for_org(org_name, cameras):
             for problem in status["problems"]:
                 if "Не пишет" in problem:
                     problems_with_archive.append(f"{problem} {status['archive_duration']}")
+                elif "Не онлайн" in problem:
+                    # Для оффлайн камер тоже показываем архив
+                    problems_with_archive.append(f"{problem}")
                 else:
                     problems_with_archive.append(problem)
-            problem_lines.append(f"📍 {cam_name} — {', '.join(problems_with_archive)}")
+            
+            # Добавляем информацию об архиве в конце, если есть проблемы
+            archive_info = f" ({status['archive_duration']} архива)"
+            problem_lines.append(f"📍 {cam_name} — {', '.join(problems_with_archive)}{archive_info}")
     
     if not problem_lines:
         return None
