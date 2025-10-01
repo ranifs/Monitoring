@@ -109,6 +109,26 @@ def get_cameras_for_org(org_id):
         print(f"⚠️ Ошибка получения камер для организации {org_id}: {e}")
         return []
 
+def format_archive_duration(dvr_depth):
+    """Форматирует количество дней архива в читаемый вид"""
+    if dvr_depth == 0:
+        return "0 дней"
+    elif dvr_depth < 1:
+        # Если меньше дня, показываем часы
+        hours = int(dvr_depth * 24)
+        return f"{hours}ч"
+    elif dvr_depth == int(dvr_depth):
+        # Если целое число дней
+        return f"{int(dvr_depth)} дней"
+    else:
+        # Если дробное число дней
+        days = int(dvr_depth)
+        hours = int((dvr_depth - days) * 24)
+        if hours == 0:
+            return f"{days} дней"
+        else:
+            return f"{days}д {hours}ч"
+
 def check_camera_status(cam):
     """Улучшенная проверка статуса камеры"""
     problems = []
@@ -128,7 +148,7 @@ def check_camera_status(cam):
         is_online = True
     
     if not is_online:
-        problems.append("❌ Нет онлайн")
+        problems.append("❌ Не онлайн")
     
     # Проверка архива - более детальная
     has_archive = False
@@ -149,7 +169,7 @@ def check_camera_status(cam):
         has_archive = True
     
     if not has_archive:
-        archive_problems.append("❌ Нет архива")
+        archive_problems.append("❌ Не пишет")
         # Дополнительная диагностика
         if dvr_depth == 0:
             archive_problems.append("(dvr_depth=0)")
@@ -181,7 +201,8 @@ def check_camera_status(cam):
         "has_archive": has_archive,
         "problems": problems,
         "dvr_depth": dvr_depth,
-        "recording_enabled": recording_enabled
+        "recording_enabled": recording_enabled,
+        "archive_duration": format_archive_duration(dvr_depth)
     }
 
 def build_report_for_org(org_name, cameras):
@@ -190,6 +211,7 @@ def build_report_for_org(org_name, cameras):
     problem_lines = []
     no_archive_count = 0
     offline_count = 0
+    archive_durations = []
     
     for cam in cameras:
         cam_name = cam.get("name") or cam.get("title") or cam.get("label") or cam.get("id") or "(Без имени)"
@@ -199,21 +221,37 @@ def build_report_for_org(org_name, cameras):
             offline_count += 1
         if not status["has_archive"]:
             no_archive_count += 1
+        
+        # Собираем информацию о днях архива
+        archive_durations.append(status["archive_duration"])
             
         if status["problems"]:
-            problem_lines.append(f"📍 {cam_name} — {', '.join(status['problems'])}")
+            # Добавляем информацию о днях архива к проблемам
+            problems_with_archive = []
+            for problem in status["problems"]:
+                if "Не пишет" in problem:
+                    problems_with_archive.append(f"{problem} {status['archive_duration']}")
+                else:
+                    problems_with_archive.append(problem)
+            problem_lines.append(f"📍 {cam_name} — {', '.join(problems_with_archive)}")
     
     if not problem_lines:
         return None
     
-    report = f"====================\n🏢 {org_name}\n====================\n"
+    # Определяем общую продолжительность архива для организации
+    if archive_durations:
+        # Берем минимальную продолжительность архива (самую проблемную)
+        min_archive = min(archive_durations)
+    else:
+        min_archive = "0 дней"
     
     # Специальные случаи
     if no_archive_count == len(cameras):
-        return {"type": "no_archive_all", "org_name": org_name}
+        return {"type": "no_archive_all", "org_name": org_name, "archive_duration": min_archive}
     if offline_count == len(cameras):
         return {"type": "all_offline", "org_name": org_name}
     
+    report = f"====================\n🏢 {org_name}\n====================\n"
     report += "\n".join(problem_lines)
     return {"type": "normal", "content": report}
 
@@ -246,7 +284,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         report = build_report_for_org(org_name, cams_data)
         if report:
             if report["type"] == "no_archive_all":
-                no_archive_orgs.append(report["org_name"])
+                no_archive_orgs.append(report)
             elif report["type"] == "all_offline":
                 all_offline_orgs.append(report["org_name"])
             else:
@@ -258,7 +296,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_telegram_message(msg)
     
     if no_archive_orgs:
-        msg = f"❗️ НЕТ АРХИВА НА ВСЕХ КАМЕРАХ:\n\n" + "\n".join([f"🏢 {org}" for org in no_archive_orgs])
+        # Собираем информацию о днях архива для каждой организации
+        no_archive_lines = []
+        for org_data in no_archive_orgs:
+            if isinstance(org_data, dict):
+                org_name = org_data["org_name"]
+                archive_duration = org_data.get("archive_duration", "0 дней")
+                no_archive_lines.append(f"🏢 {org_name} - {archive_duration} архива")
+            else:
+                no_archive_lines.append(f"🏢 {org_data}")
+        
+        msg = f"❗️ НЕТ АРХИВА НА ВСЕХ КАМЕРАХ:\n\n" + "\n".join(no_archive_lines)
         await send_telegram_message(msg)
 
     if problem_reports:
