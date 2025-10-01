@@ -148,8 +148,6 @@ def analyze_recording_stability(cam_data):
     if stream_status:
         if stream_status.get("quality", 100) < 80:
             stability_issues.append("плохое качество")
-        if stream_status.get("fps", 0) < 10:
-            stability_issues.append("низкий FPS")
     
     # Проверяем размер архива (может указывать на перебои)
     archive_size = cam_data.get("archive_size", 0)
