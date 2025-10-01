@@ -129,8 +129,28 @@ def format_archive_duration(dvr_depth):
         else:
             return f"{days}д {hours}ч"
 
-def format_offline_time(last_activity):
+def format_offline_time(cam_data):
     """Форматирует время, сколько камера не работает"""
+    # Ищем различные поля времени в данных камеры
+    time_fields = [
+        'last_activity',
+        'last_seen', 
+        'last_online',
+        'last_connection',
+        'last_ping',
+        'last_update',
+        'updated_at',
+        'created_at',
+        'timestamp'
+    ]
+    
+    last_activity = None
+    for field in time_fields:
+        if field in cam_data and cam_data[field]:
+            last_activity = cam_data[field]
+            print(f"🔍 Найдено поле времени: {field} = {last_activity}")
+            break
+    
     if not last_activity:
         return "неизвестно"
     
@@ -177,6 +197,11 @@ def format_offline_time(last_activity):
 def check_camera_status(cam):
     """Улучшенная проверка статуса камеры"""
     problems = []
+    
+    # Логируем доступные поля для отладки
+    cam_name = cam.get("name") or cam.get("title") or cam.get("id") or "Unknown"
+    print(f"🔍 Анализируем камеру: {cam_name}")
+    print(f"📋 Доступные поля: {list(cam.keys())}")
     
     # Проверяем различные статусы подключения
     stream_status = cam.get("stream_status", {})
@@ -244,8 +269,8 @@ def check_camera_status(cam):
             pass
     
     # Определяем время offline
-    if not is_online and last_activity:
-        offline_time = format_offline_time(last_activity)
+    if not is_online:
+        offline_time = format_offline_time(cam)
     
     return {
         "is_online": is_online,
