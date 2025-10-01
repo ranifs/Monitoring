@@ -129,6 +129,51 @@ def format_archive_duration(dvr_depth):
         else:
             return f"{days}д {hours}ч"
 
+def format_offline_time(last_activity):
+    """Форматирует время, сколько камера не работает"""
+    if not last_activity:
+        return "неизвестно"
+    
+    try:
+        from datetime import datetime
+        import time
+        
+        # Предполагаем, что last_activity в Unix timestamp
+        if isinstance(last_activity, (int, float)):
+            last_time = datetime.fromtimestamp(last_activity)
+        else:
+            # Если это строка, пытаемся парсить
+            last_time = datetime.fromisoformat(str(last_activity).replace('Z', '+00:00'))
+        
+        now = datetime.now()
+        time_diff = now - last_time
+        
+        total_seconds = int(time_diff.total_seconds())
+        
+        if total_seconds < 60:
+            return f"{total_seconds}с"
+        elif total_seconds < 3600:
+            minutes = total_seconds // 60
+            return f"{minutes}м"
+        elif total_seconds < 86400:
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            if minutes == 0:
+                return f"{hours}ч"
+            else:
+                return f"{hours}ч {minutes}м"
+        else:
+            days = total_seconds // 86400
+            hours = (total_seconds % 86400) // 3600
+            if hours == 0:
+                return f"{days}д"
+            else:
+                return f"{days}д {hours}ч"
+                
+    except Exception as e:
+        print(f"⚠️ Ошибка форматирования времени offline: {e}")
+        return "неизвестно"
+
 def check_camera_status(cam):
     """Улучшенная проверка статуса камеры"""
     problems = []
@@ -185,6 +230,8 @@ def check_camera_status(cam):
     
     # Проверка последней активности
     last_activity = cam.get("last_activity")
+    offline_time = "неизвестно"
+    
     if last_activity:
         try:
             from datetime import datetime, timedelta
@@ -196,13 +243,18 @@ def check_camera_status(cam):
         except:
             pass
     
+    # Определяем время offline
+    if not is_online and last_activity:
+        offline_time = format_offline_time(last_activity)
+    
     return {
         "is_online": is_online,
         "has_archive": has_archive,
         "problems": problems,
         "dvr_depth": dvr_depth,
         "recording_enabled": recording_enabled,
-        "archive_duration": format_archive_duration(dvr_depth)
+        "archive_duration": format_archive_duration(dvr_depth),
+        "offline_time": offline_time
     }
 
 def build_report_for_org(org_name, cameras):
@@ -232,8 +284,9 @@ def build_report_for_org(org_name, cameras):
                 if "Не пишет" in problem:
                     problems_with_archive.append(f"{problem} {status['archive_duration']}")
                 elif "Не онлайн" in problem:
-                    # Для оффлайн камер тоже показываем архив
-                    problems_with_archive.append(f"{problem}")
+                    # Для оффлайн камер показываем время offline
+                    offline_info = f" {status['offline_time']}" if status['offline_time'] != "неизвестно" else ""
+                    problems_with_archive.append(f"{problem}{offline_info}")
                 else:
                     problems_with_archive.append(problem)
             
