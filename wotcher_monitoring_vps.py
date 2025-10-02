@@ -143,8 +143,19 @@ def get_alternative_camera_name(cam):
         'description',
         'alias',
         'nickname',
-        'custom_name'
+        'custom_name',
+        'camera_name',
+        'display_name',
+        'friendly_name',
+        'hostname',
+        'ip_address',
+        'port',
+        'channel',
+        'camera_id',
+        'device_name'
     ]
+    
+    print(f"🔍 Ищем альтернативное название для UUID камеры. Доступные поля: {list(cam.keys())}")
     
     for field in alt_fields:
         if field in cam and cam[field]:
@@ -154,6 +165,7 @@ def get_alternative_camera_name(cam):
                 return alt_name
     
     # Если не найдено, возвращаем None
+    print(f"⚠️ Альтернативное название не найдено для UUID камеры")
     return None
 
 def get_camera_display_name(cam):
@@ -322,13 +334,9 @@ def format_offline_time(cam_data):
             break
     
     if not last_activity:
-        # ВРЕМЕННОЕ РЕШЕНИЕ: если нет поля времени, генерируем случайное время
-        # Это поможет протестировать отображение
-        import random
-        times = ["2ч", "1д 6ч", "3д", "1ч 30м", "12ч", "5д 2ч"]
-        selected_time = random.choice(times)
-        print(f"⚠️ Поле времени не найдено, используем тестовое: {selected_time}")
-        return selected_time
+        # Если нет данных о времени, не показываем ложное время
+        print(f"⚠️ Нет данных о времени для определения offline статуса")
+        return "неизвестно"
     
     try:
         from datetime import datetime
@@ -368,10 +376,7 @@ def format_offline_time(cam_data):
                 
     except Exception as e:
         print(f"⚠️ Ошибка форматирования времени offline: {e}")
-        # ВРЕМЕННОЕ РЕШЕНИЕ: возвращаем тестовое время
-        import random
-        times = ["2ч", "1д 6ч", "3д", "1ч 30м", "12ч", "5д 2ч"]
-        return random.choice(times)
+        return "неизвестно"
 
 def check_camera_status(cam):
     """Улучшенная проверка статуса камеры"""
@@ -379,6 +384,7 @@ def check_camera_status(cam):
     
     # Получаем название камеры
     cam_name = get_camera_display_name(cam)
+    print(f"📹 Анализируем камеру: {cam_name}")
     
     # Проверяем различные статусы подключения
     stream_status = cam.get("stream_status", {})
