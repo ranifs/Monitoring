@@ -131,8 +131,10 @@ def format_archive_duration(dvr_depth):
 
 def get_alternative_camera_name(cam):
     """Ищет альтернативное название для камер с UUID"""
-    # Поля, которые могут содержать альтернативное название
+    # Поля в порядке приоритета (title первым, так как содержит нужное название)
     alt_fields = [
+        'title',  # Основное поле с нужным названием
+        'label',
         'serial_number',
         'mac_address', 
         'device_id',
@@ -170,17 +172,25 @@ def get_alternative_camera_name(cam):
 
 def get_camera_display_name(cam):
     """Получает отображаемое название камеры"""
-    # Сначала получаем основное название
-    main_name = cam.get("name") or cam.get("title") or cam.get("label") or cam.get("id") or "Unknown"
+    # Приоритет: title, label, name, id
+    # Если name - это UUID, используем title или другие поля
     
-    # Проверяем, является ли название UUID (формат: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
-    if len(main_name) == 36 and main_name.count('-') == 4:
-        # Это UUID, ищем альтернативное название
+    main_name = cam.get("name")
+    
+    # Проверяем, является ли name UUID (формат: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+    if main_name and len(main_name) == 36 and main_name.count('-') == 4:
+        # name - это UUID, ищем альтернативное название
         alt_name = get_alternative_camera_name(cam)
         if alt_name:
             return alt_name
+        # Если альтернативное название не найдено, используем title
+        title = cam.get("title")
+        if title:
+            return title
     
-    return main_name
+    # Если name не UUID или title не найден, используем стандартную логику
+    display_name = cam.get("title") or cam.get("label") or cam.get("name") or cam.get("id") or "Unknown"
+    return display_name
 
 def analyze_recording_stability(cam_data):
     """Анализирует стабильность записи архива"""
