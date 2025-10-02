@@ -21,6 +21,29 @@ SPUTNIK_API_TOKEN = "1IWIwoxDUbCGEEZR6Lj6ExOY51U"
 
 EXCLUDED_ORG_NAMES = ["ZZCameras"]
 
+# ===== Конфигурация городов и групп =====
+CITY_GROUPS = {
+    "Альметьевск": {
+        "chat_id": "@almetevsk_cameras",  # Замените на реальный никнейм группы
+        "keywords": ["альметьевск", "алметьевск", "almetevsk"]
+    },
+    "Казань": {
+        "chat_id": "@kazan_cameras",  # Замените на реальный никнейм группы
+        "keywords": ["казань", "kazan", "казан"]
+    },
+    "Зеленодольск": {
+        "chat_id": "@zelenodolsk_cameras",  # Замените на реальный никнейм группы
+        "keywords": ["зеленодольск", "zelenodolsk", "зеленодольский"]
+    },
+    "Тюмень": {
+        "chat_id": "@tyumen_cameras",  # Замените на реальный никнейм группы
+        "keywords": ["тюмень", "tyumen", "тюмен"]
+    }
+}
+
+# Дефолтная группа для неизвестных городов
+DEFAULT_CHAT_ID = TELEGRAM_CHAT_ID
+
 # ===== Обработчики сигналов =====
 def signal_handler(signum, frame):
     global script_running
@@ -36,18 +59,50 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 atexit.register(cleanup)
 
+# ===== Определение города организации =====
+def get_city_for_organization(org_name):
+    """Определяет город организации по названию"""
+    if not org_name:
+        return None
+    
+    org_name_lower = org_name.lower()
+    
+    for city, config in CITY_GROUPS.items():
+        for keyword in config["keywords"]:
+            if keyword.lower() in org_name_lower:
+                print(f"🏙️ Организация '{org_name}' относится к городу: {city}")
+                return city
+    
+    print(f"❓ Город для организации '{org_name}' не определен")
+    return None
+
+def get_chat_id_for_city(city):
+    """Получает chat_id для города"""
+    if city and city in CITY_GROUPS:
+        return CITY_GROUPS[city]["chat_id"]
+    return DEFAULT_CHAT_ID
+
 # ===== Telegram =====
-async def send_telegram_message(text):
+async def send_telegram_message(text, chat_id=None):
+    """Отправляет сообщение в указанную группу или по умолчанию"""
+    if chat_id is None:
+        chat_id = TELEGRAM_CHAT_ID
+    
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     max_length = 4000
     parts = [text[i:i + max_length] for i in range(0, len(text), max_length)]
     for part in parts:
         try:
-            print(f"📨 Отправляем сообщение длиной {len(part)} символов...")
-            requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": part}, timeout=30)
+            print(f"📨 Отправляем сообщение длиной {len(part)} символов в {chat_id}...")
+            requests.post(url, data={"chat_id": chat_id, "text": part}, timeout=30)
             time.sleep(0.5)
         except Exception as e:
-            print(f"⚠ Ошибка отправки в Telegram: {e}")
+            print(f"⚠ Ошибка отправки в Telegram ({chat_id}): {e}")
+
+async def send_telegram_message_to_city(text, city):
+    """Отправляет сообщение в группу города"""
+    chat_id = get_chat_id_for_city(city)
+    await send_telegram_message(text, chat_id)
 
 # ===== Универсальный GET с retries =====
 def get_json_with_retries(url, headers=None, retries=3, timeout=15):
@@ -585,31 +640,64 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 problem_reports.append(report["content"])
 
-    # Отправляем сообщения
-    if all_offline_orgs:
-        msg = f"🚨 ВСЕ КАМЕРЫ ОФФЛАЙН:\n\n" + "\n".join([f"🏢 {org}" for org in all_offline_orgs])
-        await send_telegram_message(msg)
-    
-    if no_archive_orgs:
-        # Собираем информацию о днях архива для каждой организации
-        no_archive_lines = []
-        for org_data in no_archive_orgs:
-            if isinstance(org_data, dict):
-                org_name = org_data["org_name"]
-                archive_duration = org_data.get("archive_duration", "0 дней")
-                no_archive_lines.append(f"🏢 {org_name} - {archive_duration} архива")
-            else:
-                no_archive_lines.append(f"🏢 {org_data}")
-        
-        msg = f"❗️ НЕТ АРХИВА НА ВСЕХ КАМЕРАХ:\n\n" + "\n".join(no_archive_lines)
-        await send_telegram_message(msg)
+    # Отправляем сообщения по городам
+    await send_reports_by_city(all_offline_orgs, no_archive_orgs, problem_reports)
 
+async def send_reports_by_city(all_offline_orgs, no_archive_orgs, problem_reports):
+    """Отправляет отчеты в соответствующие группы городов"""
+    # Группируем организации по городам
+    cities_data = {}
+    
+    # Обрабатываем организации без архива
+    for org_data in no_archive_orgs:
+        if isinstance(org_data, dict):
+            org_name = org_data["org_name"]
+            archive_duration = org_data.get("archive_duration", "0 дней")
+        else:
+            org_name = org_data
+            archive_duration = "0 дней"
+        
+        city = get_city_for_organization(org_name)
+        if city not in cities_data:
+            cities_data[city] = {"no_archive": [], "offline": [], "problems": []}
+        cities_data[city]["no_archive"].append(f"🏢 {org_name} - {archive_duration} архива")
+    
+    # Обрабатываем оффлайн организации
+    for org_name in all_offline_orgs:
+        city = get_city_for_organization(org_name)
+        if city not in cities_data:
+            cities_data[city] = {"no_archive": [], "offline": [], "problems": []}
+        cities_data[city]["offline"].append(f"🏢 {org_name}")
+    
+    # Обрабатываем проблемные отчеты (пока отправляем в дефолтную группу)
     if problem_reports:
-        await send_telegram_message("⚠️ Некоторые камеры имеют проблемы:")
-        for report in problem_reports:
-            await send_telegram_message(report)
-    elif not no_archive_orgs and not all_offline_orgs:
-        await send_telegram_message("✅ Все камеры онлайн и с архивом.")
+        if None not in cities_data:
+            cities_data[None] = {"no_archive": [], "offline": [], "problems": []}
+        cities_data[None]["problems"].extend(problem_reports)
+    
+    # Отправляем сообщения в соответствующие группы
+    for city, data in cities_data.items():
+        messages = []
+        
+        if data["offline"]:
+            msg = f"🚨 ВСЕ КАМЕРЫ ОФФЛАЙН:\n\n" + "\n".join(data["offline"])
+            messages.append(msg)
+        
+        if data["no_archive"]:
+            msg = f"❗️ НЕТ АРХИВА НА ВСЕХ КАМЕРАХ:\n\n" + "\n".join(data["no_archive"])
+            messages.append(msg)
+        
+        if data["problems"]:
+            messages.append("⚠️ Некоторые камеры имеют проблемы:")
+            messages.extend(data["problems"])
+        
+        # Если нет проблем, отправляем сообщение об успехе
+        if not any([data["offline"], data["no_archive"], data["problems"]]):
+            messages.append("✅ Все камеры онлайн и с архивом.")
+        
+        # Отправляем все сообщения в соответствующую группу
+        for msg in messages:
+            await send_telegram_message_to_city(msg, city)
 
 # ===== Команда /test_org =====
 async def test_org(update: Update, context: ContextTypes.DEFAULT_TYPE):
