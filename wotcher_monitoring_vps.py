@@ -198,17 +198,8 @@ def analyze_recent_recording_gaps(cam_data):
             break
     
     if not last_activity:
-        # Если нет данных о времени, используем временное решение
-        import random
-        gap_problems = [
-            "частые перебои записи за 3ч",
-            "нестабильная запись за 3ч", 
-            "пропуски в архиве за 3ч",
-            "прерывистая запись за 3ч"
-        ]
-        # 20% шанс показать проблему (меньше чем раньше)
-        if random.random() < 0.2:
-            return random.choice(gap_problems)
+        # Если нет данных о времени, не показываем ложных проблем
+        print(f"⚠️ Нет данных о времени для анализа перебоев записи")
         return None
     
     try:
@@ -226,6 +217,7 @@ def analyze_recent_recording_gaps(cam_data):
             return f"нет активности {time_diff.days}д {time_diff.seconds//3600}ч"
         
         # Проверяем другие поля, которые могут указывать на перебои
+        # Более строгие критерии для избежания ложных срабатываний
         gap_indicators = [
             'recording_gaps',
             'connection_gaps', 
@@ -238,11 +230,11 @@ def analyze_recent_recording_gaps(cam_data):
             if field in cam_data:
                 value = cam_data[field]
                 if isinstance(value, list) and len(value) > 0:
-                    # Анализируем интервалы записи
-                    recent_gaps = [gap for gap in value if gap > 60]  # перерывы больше минуты
-                    if len(recent_gaps) > 2:
+                    # Анализируем интервалы записи - только если много перерывов
+                    recent_gaps = [gap for gap in value if gap > 120]  # перерывы больше 2 минут
+                    if len(recent_gaps) > 5:  # больше 5 перерывов
                         return "частые перебои записи за 3ч"
-                elif isinstance(value, (int, float)) and value > 0:
+                elif isinstance(value, (int, float)) and value > 10:  # больше 10 ошибок
                     return "есть перебои записи за 3ч"
         
         # Проверяем счетчики ошибок за последние часы
@@ -254,7 +246,7 @@ def analyze_recent_recording_gaps(cam_data):
         ]
         
         for field in error_fields:
-            if field in cam_data and cam_data[field] > 5:
+            if field in cam_data and cam_data[field] > 10:  # больше 10 ошибок
                 return "много ошибок за 3ч"
         
         return None
@@ -431,6 +423,7 @@ def check_camera_status(cam):
     if recording_gaps:
         problems.append(f"⚠️ {recording_gaps}")
         print(f"🔍 Найдены перебои записи за последние 3 часа: {recording_gaps}")
+        print(f"📋 Данные камеры {cam_name}: {list(cam.keys())}")
     
     return {
         "is_online": is_online,
