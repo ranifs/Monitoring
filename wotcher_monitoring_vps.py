@@ -129,6 +129,47 @@ def format_archive_duration(dvr_depth):
         else:
             return f"{days}д {hours}ч"
 
+def get_alternative_camera_name(cam):
+    """Ищет альтернативное название для камер с UUID"""
+    # Поля, которые могут содержать альтернативное название
+    alt_fields = [
+        'serial_number',
+        'mac_address', 
+        'device_id',
+        'hardware_id',
+        'model',
+        'vendor',
+        'location',
+        'description',
+        'alias',
+        'nickname',
+        'custom_name'
+    ]
+    
+    for field in alt_fields:
+        if field in cam and cam[field]:
+            alt_name = str(cam[field]).strip()
+            if alt_name and len(alt_name) > 0:
+                print(f"🔍 Найдено альтернативное название в поле '{field}': {alt_name}")
+                return alt_name
+    
+    # Если не найдено, возвращаем None
+    return None
+
+def get_camera_display_name(cam):
+    """Получает отображаемое название камеры"""
+    # Сначала получаем основное название
+    main_name = cam.get("name") or cam.get("title") or cam.get("label") or cam.get("id") or "Unknown"
+    
+    # Проверяем, является ли название UUID (формат: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+    if len(main_name) == 36 and main_name.count('-') == 4:
+        # Это UUID, ищем альтернативное название
+        alt_name = get_alternative_camera_name(cam)
+        if alt_name:
+            return alt_name
+    
+    return main_name
+
 def analyze_recording_stability(cam_data):
     """Анализирует стабильность записи архива"""
     stability_issues = []
@@ -337,7 +378,7 @@ def check_camera_status(cam):
     problems = []
     
     # Получаем название камеры
-    cam_name = cam.get("name") or cam.get("title") or cam.get("id") or "Unknown"
+    cam_name = get_camera_display_name(cam)
     
     # Проверяем различные статусы подключения
     stream_status = cam.get("stream_status", {})
@@ -445,7 +486,7 @@ def build_report_for_org(org_name, cameras):
     archive_durations = []
     
     for cam in cameras:
-        cam_name = cam.get("name") or cam.get("title") or cam.get("label") or cam.get("id") or "(Без имени)"
+        cam_name = get_camera_display_name(cam)
         status = check_camera_status(cam)
         
         if not status["is_online"]:
